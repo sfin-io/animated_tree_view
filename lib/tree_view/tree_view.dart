@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:animated_tree_view/animated_tree_view.dart';
 import 'package:animated_tree_view/constants/constants.dart';
@@ -19,6 +20,9 @@ ExpansionIndicator _defExpansionIndicatorBuilder<Data>(
 ExpansionIndicator noExpansionIndicatorBuilder<Data>(
         BuildContext context, ITreeNode<Data> tree) =>
     NoExpansionIndicator(tree: tree);
+
+/// Callback to reorder the tree item
+typedef OnReorderCallback = void Function(int oldIndex, int newIndex);
 
 /// The builder function that allows to build any item of type [Tree].
 /// The [level] has been removed from the builder in version 2.0.0. To get the
@@ -112,6 +116,8 @@ final class TreeViewController<Data, Tree extends ITreeNode<Data>> {
 
 abstract base class _TreeView<Data, Tree extends ITreeNode<Data>>
     extends StatefulWidget {
+  final OnReorderCallback? onReorderCallback;
+
   /// The [builder] function that is provided to the item builder
   final TreeNodeWidgetBuilder<Tree> builder;
 
@@ -196,6 +202,7 @@ abstract base class _TreeView<Data, Tree extends ITreeNode<Data>>
     this.expansionBehavior = ExpansionBehavior.none,
     required this.builder,
     required this.tree,
+    this.onReorderCallback,
     Indentation? indentation,
     this.scrollController,
     this.expansionIndicatorBuilder = _defExpansionIndicatorBuilder,
@@ -401,6 +408,7 @@ final class TreeView<Data, Tree extends ITreeNode<Data>>
     super.expansionBehavior,
     required super.builder,
     required super.tree,
+    super.onReorderCallback,
     super.indentation,
     super.scrollController,
     super.expansionIndicatorBuilder,
@@ -438,6 +446,7 @@ final class TreeView<Data, Tree extends ITreeNode<Data>>
     Key? key,
     required TreeNodeWidgetBuilder<TreeNode<Data>> builder,
     required final TreeNode<Data> tree,
+    final OnReorderCallback? onReorderCallback,
     ExpansionBehavior expansionBehavior = ExpansionBehavior.none,
     Indentation? indentation,
     AutoScrollController? scrollController,
@@ -456,6 +465,7 @@ final class TreeView<Data, Tree extends ITreeNode<Data>>
         key: key,
         builder: builder,
         tree: tree,
+        onReorderCallback: onReorderCallback,
         expansionBehavior: expansionBehavior,
         indentation: indentation,
         expansionIndicatorBuilder:
@@ -659,28 +669,96 @@ class TreeViewState<Data, Tree extends ITreeNode<Data>>
   late final GlobalKey<AnimatedListState> _listKey =
       GlobalKey<AnimatedListState>();
 
+  //
   final Animation<double>? _animation;
 
   @override
   void insertItem(int index, {Duration duration = animationDuration}) {
-    if (_listKey.currentState == null) throw Exception(_errorMsg);
-    _listKey.currentState!.insertItem(index, duration: duration);
+    if (widget.onReorderCallback != null) {
+      setState(() {});
+    } else {
+      if (_listKey.currentState == null) throw Exception(_errorMsg);
+      _listKey.currentState!.insertItem(index, duration: duration);
+    }
   }
 
   @override
   void removeItem(int index, Tree item,
       {Duration duration = animationDuration}) {
-    if (_listKey.currentState == null) throw Exception(_errorMsg);
-    _listKey.currentState!.removeItem(
-      index,
-      (context, animation) =>
-          _removedItemBuilder(context, item, _animation ?? animation),
-      duration: duration,
+    if (widget.onReorderCallback != null) {
+      setState(() {});
+    } else {
+      if (_listKey.currentState == null) throw Exception(_errorMsg);
+      _listKey.currentState!.removeItem(
+        index,
+        (context, animation) =>
+            _removedItemBuilder(context, item, _animation ?? animation),
+        duration: duration,
+      );
+    }
+  }
+
+  Widget proxyDecorator(Widget child, int index, Animation<double> animation) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (BuildContext context, Widget? child) {
+        final double animValue = Curves.easeInOut.transform(animation.value);
+        final double elevation = lerpDouble(0, 1, animValue)!;
+        return Material(
+          elevation: elevation,
+          shadowColor: Colors.grey,
+          child: child,
+        );
+      },
+      child: child,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.onReorderCallback != null)
+      return ReorderableListView(
+        scrollController: _scrollController,
+        primary: widget.primary,
+        physics: widget.physics,
+        padding: widget.padding?.resolve(TextDirection.ltr),
+        shrinkWrap: widget.shrinkWrap,
+        proxyDecorator: proxyDecorator,
+        buildDefaultDragHandles: false,
+        children: <Widget>[
+          for (int index = 0;
+              index < (_stateHelper.animatedListStateController.list.length);
+              index++)
+            ReorderableDelayedDragStartListener(
+              key: ValueKey(index),
+              index: index,
+              enabled: _stateHelper
+                      .animatedListStateController.list[index].parent?.isRoot ??
+                  false,
+              child: _insertedItemBuilder(context, index, _animation!),
+            ),
+        ],
+        onReorderEnd: (int index) {},
+        onReorder: (int oldIndex, int newIndex) {
+          if (oldIndex != newIndex) {
+            var expandedItem = _stateHelper.animatedListStateController.list
+                .where((element) => element.isExpanded)
+                .toList();
+            int expandedLen = 0;
+            if (expandedItem.isNotEmpty) {
+              int expandedIndex = _stateHelper.animatedListStateController.list
+                  .indexWhere((element) => element == expandedItem.first);
+              if (expandedIndex < newIndex) {
+                expandedLen = _stateHelper
+                    .animatedListStateController.list[expandedIndex].length;
+              }
+            }
+            widget.onReorderCallback!(oldIndex, newIndex - expandedLen);
+            Future.delayed(Duration(milliseconds: 500))
+                .then((value) => _scrollController.scrollToIndex(newIndex));
+          }
+        },
+      );
     return AnimatedList(
       key: _listKey,
       initialItemCount: _stateHelper.animatedListStateController.list.length,
@@ -723,6 +801,7 @@ final class SliverTreeView<Data, Tree extends ITreeNode<Data>>
     super.key,
     required super.builder,
     required super.tree,
+    super.onReorderCallback,
     super.expansionBehavior,
     super.expansionIndicatorBuilder,
     super.indentation,
