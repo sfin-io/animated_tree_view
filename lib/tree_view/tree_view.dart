@@ -748,12 +748,16 @@ class TreeViewState<Data, Tree extends ITreeNode<Data>>
             if (expandedItem.isNotEmpty) {
               int expandedIndex = _stateHelper.animatedListStateController.list
                   .indexWhere((element) => element == expandedItem.first);
+              expandedLen = _stateHelper
+                  .animatedListStateController.list[expandedIndex].length;
+              if (expandedIndex < oldIndex) {
+                oldIndex -= expandedLen;
+              }
               if (expandedIndex < newIndex) {
-                expandedLen = _stateHelper
-                    .animatedListStateController.list[expandedIndex].length;
+                newIndex -= expandedLen;
               }
             }
-            widget.onReorderCallback!(oldIndex, newIndex - expandedLen);
+            widget.onReorderCallback!(oldIndex, newIndex);
             Future.delayed(Duration(milliseconds: 500))
                 .then((value) => _scrollController.scrollToIndex(newIndex));
           }
